@@ -37,6 +37,10 @@ DO_DOCKER=0
 DO_ZSH=0
 DO_NGINX=0
 DO_SSH=0
+DO_FIREWALL=0
+
+# --- Firewall args ---
+FIREWALL_EXTRA_PORTS=()
 
 # --- Nginx args ---
 DOMAIN=""
@@ -47,23 +51,26 @@ EMAIL=""
 INTERACTIVE=1
 for arg in "$@"; do
   case "$arg" in
-    --all)       DO_DOCKER=1; DO_ZSH=1; DO_NGINX=1; DO_SSH=1; INTERACTIVE=0 ;;
-    --docker)    DO_DOCKER=1; INTERACTIVE=0 ;;
-    --zsh)       DO_ZSH=1; INTERACTIVE=0 ;;
-    --nginx)     DO_NGINX=1; INTERACTIVE=0 ;;
-    --ssh)       DO_SSH=1; INTERACTIVE=0 ;;
-    --domain=*)  DOMAIN="${arg#*=}" ;;
-    --port=*)    PROXY_PORT="${arg#*=}" ;;
-    --email=*)   EMAIL="${arg#*=}" ;;
+    --all)          DO_DOCKER=1; DO_ZSH=1; DO_NGINX=1; DO_SSH=1; DO_FIREWALL=1; INTERACTIVE=0 ;;
+    --docker)       DO_DOCKER=1; INTERACTIVE=0 ;;
+    --zsh)          DO_ZSH=1; INTERACTIVE=0 ;;
+    --nginx)        DO_NGINX=1; INTERACTIVE=0 ;;
+    --ssh)          DO_SSH=1; INTERACTIVE=0 ;;
+    --firewall)     DO_FIREWALL=1; INTERACTIVE=0 ;;
+    --domain=*)     DOMAIN="${arg#*=}" ;;
+    --port=*)       PROXY_PORT="${arg#*=}" ;;
+    --email=*)      EMAIL="${arg#*=}" ;;
+    --allow=*)      FIREWALL_EXTRA_PORTS+=("${arg#*=}") ;;
     -h|--help)
       cat <<EOF
 Usage: $0 [MODULES] [OPTIONS]
    or: $0                    (интерактивное меню)
 
 Modules:
-  --all              docker + zsh + nginx + ssh
+  --all              docker + zsh + firewall + nginx + ssh
   --docker           Docker Engine + Compose
   --zsh              Zsh + oh-my-zsh
+  --firewall         UFW baseline (22/80/443 + rate limit)
   --nginx            Nginx reverse proxy + SSL
   --ssh              SSH hardening (interactive TUI)
 
@@ -71,6 +78,9 @@ Modules:
   --domain=DOMAIN    Домен (api.example.com)
   --port=PORT        Backend порт
   --email=EMAIL      Email для Let's Encrypt
+
+Опции (для --firewall):
+  --allow=PORT       Доп. порт для файрвола (повторяй: --allow=8080 --allow=5432)
 
 Примеры:
   sudo $0                                               # интерактив
@@ -115,6 +125,19 @@ if [[ "$INTERACTIVE" -eq 1 ]] && [[ -t 0 ]]; then
     DO_ZSH=1
   fi
 
+  if confirm "Настроить UFW файрвол (baseline)?" "y"; then
+    DO_FIREWALL=1
+    printf "${CYAN}❯ Доп. порты через запятую (например 8080,5432) или пусто: ${NC}"
+    read -r EXTRA_PORTS_INPUT
+    if [[ -n "${EXTRA_PORTS_INPUT:-}" ]]; then
+      IFS=',' read -ra PORT_ARR <<< "$EXTRA_PORTS_INPUT"
+      for p in "${PORT_ARR[@]}"; do
+        p="${p// /}"  # strip whitespace
+        [[ -n "$p" ]] && FIREWALL_EXTRA_PORTS+=("$p")
+      done
+    fi
+  fi
+
   if confirm "Настроить Nginx reverse proxy + SSL?" "n"; then
     DO_NGINX=1
     printf "${CYAN}❯ Домен (например api.example.com): ${NC}"
@@ -134,7 +157,7 @@ fi
 # Validation
 # =============================================================================
 
-if [[ "$DO_DOCKER" -eq 0 && "$DO_ZSH" -eq 0 && "$DO_NGINX" -eq 0 && "$DO_SSH" -eq 0 ]]; then
+if [[ "$DO_DOCKER" -eq 0 && "$DO_ZSH" -eq 0 && "$DO_NGINX" -eq 0 && "$DO_SSH" -eq 0 && "$DO_FIREWALL" -eq 0 ]]; then
   fail "Не выбран ни один модуль. См. $0 --help"
 fi
 
@@ -150,10 +173,11 @@ fi
 section "План выполнения"
 
 MODULE_COUNT=0
-[[ "$DO_DOCKER" -eq 1 ]] && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Docker:"  "Engine + Compose plugin"; }
-[[ "$DO_ZSH" -eq 1 ]]    && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Zsh:"     "zsh + oh-my-zsh + plugins"; }
-[[ "$DO_NGINX" -eq 1 ]]  && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Nginx:"   "${DOMAIN} → :${PROXY_PORT} + SSL"; }
-[[ "$DO_SSH" -eq 1 ]]    && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] SSH:"     "hardening + port knocking (INTERACTIVE)"; }
+[[ "$DO_DOCKER" -eq 1 ]]   && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Docker:"   "Engine + Compose plugin"; }
+[[ "$DO_ZSH" -eq 1 ]]      && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Zsh:"      "zsh + oh-my-zsh + plugins"; }
+[[ "$DO_FIREWALL" -eq 1 ]] && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Firewall:" "UFW baseline${FIREWALL_EXTRA_PORTS[*]:+ + ports: ${FIREWALL_EXTRA_PORTS[*]}}"; }
+[[ "$DO_NGINX" -eq 1 ]]    && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Nginx:"    "${DOMAIN} → :${PROXY_PORT} + SSL"; }
+[[ "$DO_SSH" -eq 1 ]]      && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] SSH:"      "hardening + port knocking (INTERACTIVE)"; }
 echo ""
 
 if ! confirm "Всё верно? Запускаем?" "y"; then
@@ -183,6 +207,16 @@ CURRENT=0
 [[ "$DO_DOCKER" -eq 1 ]] && { CURRENT=$((CURRENT+1)); progress_step "$CURRENT" "$MODULE_COUNT" "Docker install"; run_module "docker_install.sh"; }
 [[ "$DO_ZSH" -eq 1 ]]    && { CURRENT=$((CURRENT+1)); progress_step "$CURRENT" "$MODULE_COUNT" "Zsh install"; run_module "zsh_install.sh"; }
 
+if [[ "$DO_FIREWALL" -eq 1 ]]; then
+  CURRENT=$((CURRENT+1))
+  progress_step "$CURRENT" "$MODULE_COUNT" "Firewall baseline"
+  FW_ARGS=()
+  for p in "${FIREWALL_EXTRA_PORTS[@]}"; do
+    FW_ARGS+=("--allow=$p")
+  done
+  run_module "firewall_baseline.sh" "${FW_ARGS[@]}"
+fi
+
 if [[ "$DO_NGINX" -eq 1 ]]; then
   CURRENT=$((CURRENT+1))
   progress_step "$CURRENT" "$MODULE_COUNT" "Nginx reverse proxy + SSL"
@@ -205,10 +239,11 @@ fi
 # =============================================================================
 
 SUMMARY_LINES=()
-[[ "$DO_DOCKER" -eq 1 ]] && SUMMARY_LINES+=("Docker: $(docker --version 2>/dev/null || echo 'установлен')")
-[[ "$DO_ZSH" -eq 1 ]]    && SUMMARY_LINES+=("Zsh: $(zsh --version 2>/dev/null | cut -d, -f1 || echo 'установлен')")
-[[ "$DO_NGINX" -eq 1 ]]  && SUMMARY_LINES+=("Nginx: https://${DOMAIN}")
-[[ "$DO_SSH" -eq 1 ]]    && SUMMARY_LINES+=("SSH: hardened (проверь новый порт!)")
+[[ "$DO_DOCKER" -eq 1 ]]   && SUMMARY_LINES+=("Docker: $(docker --version 2>/dev/null || echo 'установлен')")
+[[ "$DO_ZSH" -eq 1 ]]      && SUMMARY_LINES+=("Zsh: $(zsh --version 2>/dev/null | cut -d, -f1 || echo 'установлен')")
+[[ "$DO_FIREWALL" -eq 1 ]] && SUMMARY_LINES+=("Firewall: UFW активен")
+[[ "$DO_NGINX" -eq 1 ]]    && SUMMARY_LINES+=("Nginx: https://${DOMAIN}")
+[[ "$DO_SSH" -eq 1 ]]      && SUMMARY_LINES+=("SSH: hardened (проверь новый порт!)")
 SUMMARY_LINES+=("")
 SUMMARY_LINES+=("⚠ Перелогинься для активации docker/zsh")
 

@@ -1,0 +1,35 @@
+# /etc/healthcheck.conf — пример конфигурации для healthcheck.sh
+# Копируй в /etc/healthcheck.conf и настрой под свой сервер.
+# Формат: bash-переменные (файл source'ится).
+
+# --- URLs для HTTP 200 проверки ---
+URLS=(
+  "https://api.mysite.com/health"
+  "https://mysite.com"
+)
+
+# --- Домены для SSL expiration check ---
+DOMAINS=(
+  "mysite.com"
+  "api.mysite.com"
+)
+
+# --- Пороги ---
+DISK_THRESHOLD=85        # % use
+RAM_THRESHOLD=90         # % use
+LOAD_MULTIPLIER=2        # load > cores × N
+SSL_WARN_DAYS=14         # warn если cert expires in < X days
+SSL_CRITICAL_DAYS=3      # error (Telegram) если < X days
+
+# --- Docker ---
+CHECK_DOCKER=1           # 1 = check / 0 = skip / "auto" = auto-detect
+
+# --- Postgres (опционально) ---
+# POSTGRES_CONTAINER="my_postgres"
+
+# --- Telegram alerts (опционально) ---
+# Создай бота: https://t.me/BotFather → /newbot → сохрани токен
+# Chat ID: напиши боту любое сообщение, потом curl:
+#   curl "https://api.telegram.org/bot<TOKEN>/getUpdates" | jq '.result[].message.chat.id'
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHAT_ID=""

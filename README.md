@@ -15,6 +15,18 @@ curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/v
 
 ### Individual modules
 
+#### UFW firewall baseline
+```sh
+# Baseline: deny in / allow out / SSH (auto-detect port) + HTTP + HTTPS
+curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/firewall_baseline.sh | sudo bash
+
+# С дополнительными портами
+curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/firewall_baseline.sh | \
+  sudo bash -s -- --allow=8080 --allow=5432
+```
+
+Автодетектит текущий SSH-порт из `sshd_config` или активной сессии — не залочит.
+
 #### Docker (Engine + Compose)
 ```sh
 curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/docker_install.sh | sudo bash
@@ -47,20 +59,53 @@ curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/s
 
 **⚠️ Keep a second SSH session open!** Port knocking breaks automation.
 
+### Monitoring
+
+#### Healthcheck (HTTP / SSL / Docker / disk / RAM / load + Telegram)
+
+```sh
+# Ad-hoc: проверка одного URL и домена
+./monitoring/healthcheck.sh --url=https://api.foo --domain=api.foo
+
+# Через config файл
+sudo cp monitoring/healthcheck.conf.example /etc/healthcheck.conf
+# edit /etc/healthcheck.conf — URLs, DOMAINS, Telegram token
+./monitoring/healthcheck.sh
+
+# Cron каждые 5 минут (только при ошибках)
+*/5 * * * * /opt/scripts/monitoring/healthcheck.sh --quiet 2>&1 | logger -t healthcheck
+```
+
+**Что проверяется:**
+- HTTP 200 на URL (`--url=...`, можно повторять)
+- SSL expiration (`--domain=...`): warn < 14 дней, critical < 3 дней
+- Docker containers: unhealthy и stopped
+- Disk usage, RAM usage, Load average (пороги конфигурируемы)
+- Postgres `pg_isready` (опционально)
+
+**Telegram alerts:** задать `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` в env или `/etc/healthcheck.conf`.
+
+Exit codes: `0` OK, `1` warnings, `2` errors.
+
 ## 📂 Structure
 
 ```
 scripts/
 ├── lib/
-│   └── common.sh              # Shared helpers: log/ok/warn/fail, idempotency, apt, detection
+│   └── common.sh                 # Shared helpers: logging, TUI, apt, idempotency
 ├── bootstrap/
-│   ├── docker_install.sh      # Docker Engine + Compose (idempotent)
-│   ├── zsh_install.sh         # Zsh + oh-my-zsh (split from docker)
-│   ├── nginx_install.sh       # Nginx + Let's Encrypt + security headers (idempotent)
-│   ├── secure_ssh.sh          # SSH hardening TUI (port knocking, fail2ban)
-│   └── vps_bootstrap.sh       # Orchestrator — runs modules with flags
+│   ├── docker_install.sh         # Docker Engine + Compose
+│   ├── zsh_install.sh            # Zsh + oh-my-zsh
+│   ├── firewall_baseline.sh      # UFW + rate-limited SSH + autodetect
+│   ├── nginx_install.sh          # Nginx + SSL + security headers
+│   ├── secure_ssh.sh             # SSH hardening TUI
+│   └── vps_bootstrap.sh          # Orchestrator — runs modules with flags
+├── monitoring/
+│   ├── healthcheck.sh            # HTTP/SSL/Docker/disk/RAM/load + Telegram
+│   └── healthcheck.conf.example  # Config template
+├── CLAUDE.md                     # Style guide for AI agents + humans
 └── .github/workflows/
-    └── shellcheck.yml         # CI linting
+    └── shellcheck.yml            # CI linting
 ```
 
 ### Design principles
