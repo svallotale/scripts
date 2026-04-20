@@ -190,10 +190,6 @@ else
   ok "UFW активирован"
 fi
 
-# --- Step 7: Verify ---
-log "Проверка"
-FIREWALL_STATUS=$(ufw status numbered | head -3 | tail -1)
-
 # --- Summary ---
 RULES_SUMMARY=()
 RULES_SUMMARY+=("SSH: ${SSH_PORT}/tcp (rate-limited)")
