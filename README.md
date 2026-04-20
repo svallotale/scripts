@@ -1,122 +1,200 @@
 # scripts
 
-Personal collection of VPS bootstrap and ops scripts. Quick deploy via `curl | bash` on fresh Ubuntu/Debian servers.
+Personal collection of VPS bootstrap and ops scripts. Modular design with a shared library and an orchestrator for composable setup.
 
 ## 🚀 Quick usage
 
-All scripts are publicly available via raw GitHub URLs. Copy-paste on your VPS:
+### One-shot full setup (orchestrator)
 
-### Docker + Compose + zsh + oh-my-zsh
+```sh
+# Docker + zsh + Nginx + SSL in one command
+curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/vps_bootstrap.sh | \
+  sudo bash -s -- --docker --zsh --nginx \
+    --domain=api.example.com --port=3000 --email=admin@example.com
+```
 
+### Individual modules
+
+#### Docker (Engine + Compose)
 ```sh
 curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/docker_install.sh | sudo bash
 ```
 
-### Nginx reverse proxy + Let's Encrypt SSL
-
+#### Zsh + oh-my-zsh
 ```sh
-curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/nginx_install.sh | \
-  bash -s -- <domain> <port> <email>
+curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/zsh_install.sh | sudo bash
 ```
 
-Example:
+#### Nginx reverse proxy + SSL
 ```sh
+# Positional args (backward compat)
 curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/nginx_install.sh | \
-  bash -s -- api.example.com 3000 admin@example.com
+  sudo bash -s -- api.example.com 3000 admin@example.com
+
+# Named args (recommended)
+curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/nginx_install.sh | \
+  sudo bash -s -- --domain=api.example.com --port=3000 --email=admin@example.com
 ```
 
-### Secure SSH hardening (interactive)
+Options:
+- `--force` — overwrite existing vhost
+- `--no-ssl` — HTTP only (skip certbot)
 
-⚠️ **Read the warnings below before running** — this script modifies SSH config and firewall. Keep a second SSH session open as a safety net.
-
+#### Secure SSH hardening (⚠️ interactive)
 ```sh
 curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/secure_ssh.sh | sudo bash
 ```
 
-**Safer:** download first, inspect, then run locally:
-```sh
-wget https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/secure_ssh.sh
-chmod +x secure_ssh.sh
-sudo ./secure_ssh.sh
-```
+**⚠️ Keep a second SSH session open!** Port knocking breaks automation.
 
 ## 📂 Structure
 
 ```
 scripts/
-├── bootstrap/                # VPS initialization
-│   ├── docker_install.sh     # Docker + Compose + zsh
-│   ├── nginx_install.sh      # Nginx reverse proxy + SSL
-│   └── secure_ssh.sh         # SSH hardening + fail2ban + port knocking
-└── .github/
-    └── workflows/
-        └── shellcheck.yml    # CI linting
+├── lib/
+│   └── common.sh              # Shared helpers: log/ok/warn/fail, idempotency, apt, detection
+├── bootstrap/
+│   ├── docker_install.sh      # Docker Engine + Compose (idempotent)
+│   ├── zsh_install.sh         # Zsh + oh-my-zsh (split from docker)
+│   ├── nginx_install.sh       # Nginx + Let's Encrypt + security headers (idempotent)
+│   ├── secure_ssh.sh          # SSH hardening TUI (port knocking, fail2ban)
+│   └── vps_bootstrap.sh       # Orchestrator — runs modules with flags
+└── .github/workflows/
+    └── shellcheck.yml         # CI linting
 ```
 
-## 📜 Scripts
+### Design principles
+
+- **Modular:** each script does one thing (Docker *or* zsh *or* Nginx), not many
+- **Idempotent:** safe to re-run — checks state before acting
+- **Self-describing:** `--help` flag, coloured output, progress steps
+- **Orchestratable:** `vps_bootstrap.sh` composes modules with named flags
+- **DRY:** shared helpers in `lib/common.sh` (sourced locally or via curl)
+
+## 📜 Scripts reference
+
+### `bootstrap/vps_bootstrap.sh` (orchestrator)
+
+Runs multiple modules with one command.
+
+```sh
+# All modules
+sudo ./vps_bootstrap.sh --all --domain=foo.com --port=3000 --email=a@b.c
+
+# Just Docker + zsh
+sudo ./vps_bootstrap.sh --docker --zsh
+
+# Docker + Nginx for a web app
+sudo ./vps_bootstrap.sh --docker --nginx --domain=app.foo --port=8080 --email=a@b.c
+```
+
+Flags: `--all`, `--docker`, `--zsh`, `--nginx`, `--ssh`.
 
 ### `bootstrap/docker_install.sh`
 
-Installs Docker Engine, CLI, Buildx, Compose plugin, zsh, and oh-my-zsh on Ubuntu/Debian. Adds the current non-root user to the `docker` group (requires re-login).
-
-**Requirements:** `sudo`, Ubuntu 20.04+ / Debian 11+
+Installs Docker Engine + Compose plugin. Idempotent — exits early if already installed.
 
 **What it does:**
-- Adds official Docker APT repository with GPG key
+- Adds Docker APT repository with GPG key
 - Installs `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`
-- Enables Docker service via systemd
-- Installs zsh, changes default shell, configures oh-my-zsh with `git docker` plugins
-- Runs `hello-world` verification
+- Adds sudo user to `docker` group (requires re-login)
+- Verifies via `hello-world` container
+
+### `bootstrap/zsh_install.sh`
+
+Installs Zsh + oh-my-zsh. Separated from docker so you can install individually.
+
+**What it does:**
+- Installs zsh, curl, git
+- Changes default shell for target user (`chsh`)
+- Runs oh-my-zsh installer non-interactively
+- Configures `plugins=(git docker)` in .zshrc
 
 ### `bootstrap/nginx_install.sh`
 
-Configures an Nginx reverse proxy with Let's Encrypt SSL for a single domain.
+Nginx reverse proxy + Let's Encrypt SSL. **Idempotent** (won't clobber existing vhost without `--force`).
 
-**Usage:** `nginx_install.sh <domain> <proxy_port> <email>`
+**Features:**
+- Security headers: HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+- WebSocket support (`Upgrade` / `Connection`)
+- Extended timeouts (300s) for long-lived connections
+- `X-Real-IP` / `X-Forwarded-For` / `X-Forwarded-Proto` headers
 
-**Requirements:** `sudo`, A-record pointing to server, ports 80 and 443 open.
+**Requirements:** A-record pointing to server, ports 80/443 open.
 
 ### `bootstrap/secure_ssh.sh`
 
-Interactive TUI script for SSH hardening. Features:
-
-- Random SSH port (avoids common ports like 22, 80, 443, 3306, etc.)
-- Port knocking with 3-port sequence
-- Fail2ban installation and configuration
-- Automatic backups of all modified configs (`*.bak.YYYYMMDD-HHMMSS`)
+27KB interactive TUI for SSH hardening: random port, 3-port knocking, fail2ban, config backups.
 
 **⚠️ Warnings:**
-- You can **lose SSH access** if misconfigured — always keep a second SSH session open
-- Port knocking breaks automation (CI/CD deploys need to implement knocking)
-- Remember the new SSH port after running — no default recovery path
+- Can **lose SSH access** if misconfigured — always keep a second SSH session open
+- Port knocking breaks CI/CD automation (deploy scripts must implement knocking)
+- Remember new SSH port after running
+
+### `lib/common.sh`
+
+Shared helpers sourced by all scripts:
+
+- Logging: `log`, `ok`, `warn`, `fail`, `info`, `dim`
+- Sanity: `require_root`, `require_cmd`
+- Detection: `detect_user` (populates `$TARGET_USER`, `$TARGET_HOME`), `detect_os` (populates `$OS_ID`, `$OS_CODENAME`, `$OS_VERSION`)
+- Idempotency: `has_cmd`, `has_pkg`, `file_contains`
+- APT: `apt_ensure`, `install_pkgs` (skips if already installed)
+- Summary: `print_summary_line`
+
+**Sourcing pattern** (each script does this):
+```bash
+if [[ -f "${SCRIPT_DIR}/../lib/common.sh" ]]; then
+  source "${SCRIPT_DIR}/../lib/common.sh"
+else
+  source <(curl -fsSL "$REPO_RAW/lib/common.sh")
+fi
+```
+
+Works both locally (via relative path) and via `curl | bash` (fetches lib from GitHub).
 
 ## 🔐 Safety tips
 
-**Always inspect scripts before piping to bash:**
+**Inspect before running:**
 ```sh
 curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/docker_install.sh | less
 ```
 
-**Pin to a specific commit for reproducibility:**
+**Pin to commit SHA for reproducibility:**
 ```sh
-# Replace `main` with commit SHA
 curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/abc1234/bootstrap/docker_install.sh | sudo bash
 ```
 
-**Use jsDelivr CDN for faster downloads:**
+**Use jsDelivr CDN:**
 ```sh
 curl -fsSL https://cdn.jsdelivr.net/gh/svallotale/scripts@main/bootstrap/docker_install.sh | sudo bash
 ```
 
-## 🧪 Local development
+## 🧪 Development
 
-Test scripts with [shellcheck](https://github.com/koalaman/shellcheck) before committing:
+Test locally before pushing:
 
 ```sh
-shellcheck bootstrap/*.sh
+# Install shellcheck
+sudo apt install shellcheck  # Debian/Ubuntu
+brew install shellcheck      # macOS
+scoop install shellcheck     # Windows
+
+# Lint all scripts
+shellcheck lib/*.sh bootstrap/*.sh
 ```
 
-CI validates all `.sh` files via GitHub Actions on every push.
+CI (GitHub Actions) runs shellcheck on every push.
+
+### Adding a new script
+
+1. Put it in `bootstrap/` (or create a new category folder)
+2. Source `lib/common.sh` using the pattern above
+3. Use `log`, `ok`, `warn`, `fail` for output
+4. Make it idempotent (check state before modifying)
+5. Add `--help` flag
+6. Update this README
+7. `git commit && git push` → CI validates → raw URL ready
 
 ## 📝 License
 
