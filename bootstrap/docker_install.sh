@@ -29,16 +29,15 @@ fi
 
 # =============================================================================
 
+banner "Docker Install" "Engine + Compose plugin"
+
 require_root "$@"
 detect_user
 detect_os
 
 if [[ "${OS_ID}" != "ubuntu" && "${OS_ID}" != "debian" ]]; then
   warn "Скрипт тестирован на Ubuntu/Debian, у тебя: ${OS_ID} ${OS_VERSION}"
-  if [[ -t 0 ]]; then
-    read -rp "Продолжить? [y/N] " ans
-    [[ "${ans:-n}" =~ ^[yY] ]] || fail "Отменено"
-  fi
+  confirm "Продолжить?" "n" || fail "Отменено"
 fi
 
 # --- Step 1: Check if already installed ---
@@ -110,12 +109,8 @@ else
   warn "hello-world не запустился (возможно — сетевые ограничения)"
 fi
 
-# --- Summary ---
-echo ""
-echo "${BOLD}=== Итог ===${NC}"
-print_summary_line "Docker:"        "$(docker --version 2>/dev/null || echo 'не найден')"
-print_summary_line "Compose:"       "$(docker compose version 2>/dev/null | head -1 || echo 'не найден')"
-print_summary_line "Пользователь:"  "${TARGET_USER} (группа docker — требуется relogin)"
-echo ""
-
-ok "Готово."
+success_box "Docker установлен" \
+  "$(docker --version 2>/dev/null || echo 'не найден')" \
+  "$(docker compose version 2>/dev/null | head -1 || echo 'Compose не найден')" \
+  "" \
+  "⚠ Перелогинься для применения группы docker"

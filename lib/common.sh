@@ -119,6 +119,149 @@ print_summary_line() {
   printf "  ${BOLD}%-25s${NC} %s\n" "$label" "$value"
 }
 
+# =============================================================================
+# TUI helpers
+# =============================================================================
+
+# banner "Title" ["subtitle"]
+#   Рисует рамку 60 символов с заголовком.
+banner() {
+  local title="$1"
+  local subtitle="${2:-}"
+  local width=60
+  local inner=$((width - 2))
+  local line
+  line="$(printf '═%.0s' $(seq 1 "$inner"))"
+
+  local title_padded
+  printf -v title_padded "%-${inner}s" "  ${title}"
+
+  echo ""
+  printf "${BOLD}${BLUE}╔%s╗${NC}\n" "$line"
+  printf "${BOLD}${BLUE}║${CYAN}%s${BLUE}║${NC}\n" "${title_padded}"
+  if [[ -n "$subtitle" ]]; then
+    local sub_padded
+    printf -v sub_padded "%-${inner}s" "  ${subtitle}"
+    printf "${BLUE}║${DIM}%s${NC}${BLUE}║${NC}\n" "${sub_padded}"
+  fi
+  printf "${BOLD}${BLUE}╚%s╝${NC}\n" "$line"
+  echo ""
+}
+
+# section "Title"
+#   Жирный горизонтальный разделитель.
+section() {
+  local title="$1"
+  echo ""
+  printf "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+  printf "${BOLD}${BLUE}  ▶ %s${NC}\n" "$title"
+  printf "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+  echo ""
+}
+
+# confirm "Question?" ["y"|"n"]
+#   Yes/No с дефолтом. Возвращает 0 для yes, 1 для no.
+#   В non-tty берёт default без запроса.
+confirm() {
+  local prompt="$1"
+  local default="${2:-n}"
+  local hint
+  local ans
+
+  if [[ "$default" =~ ^[yY] ]]; then
+    hint="[Y/n]"
+  else
+    hint="[y/N]"
+  fi
+
+  if [[ ! -t 0 ]]; then
+    ans="$default"
+    printf "${CYAN}❓ %s %s${NC} ${DIM}(non-tty, default=%s)${NC}\n" "$prompt" "$hint" "$default"
+  else
+    printf "${CYAN}❓ %s %s${NC} " "$prompt" "$hint"
+    read -r ans
+    ans="${ans:-$default}"
+  fi
+
+  [[ "$ans" =~ ^[yY] ]]
+}
+
+# select_menu "Prompt:" "opt1" "opt2" "opt3"
+#   Печатает нумерованный список, читает выбор, echo'ит выбранный.
+#   Возвращает 0 при валидном выборе.
+select_menu() {
+  local prompt="$1"
+  shift
+  local options=("$@")
+  local n=${#options[@]}
+  local choice i
+
+  if [[ "$n" -eq 0 ]]; then
+    fail "select_menu: список опций пуст"
+  fi
+
+  echo ""
+  printf "${BOLD}${CYAN}%s${NC}\n" "$prompt"
+  for i in "${!options[@]}"; do
+    printf "  ${BOLD}${CYAN}%d)${NC} %s\n" "$((i+1))" "${options[$i]}"
+  done
+  echo ""
+
+  if [[ ! -t 0 ]]; then
+    # Без TTY — первая опция
+    echo "${options[0]}"
+    return 0
+  fi
+
+  while true; do
+    printf "${CYAN}❯ Выбор [1-%d]: ${NC}" "$n"
+    read -r choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le "$n" ]]; then
+      echo "${options[$((choice-1))]}"
+      return 0
+    fi
+    warn "Введи число от 1 до ${n}"
+  done
+}
+
+# progress_step CURRENT TOTAL "description"
+#   [3/5] Установка Docker
+progress_step() {
+  local current="$1"
+  local total="$2"
+  local desc="$3"
+  printf "\n${BOLD}${CYAN}[%d/%d]${NC} ${BOLD}%s${NC}\n" "$current" "$total" "$desc"
+}
+
+# success_box "Title" "line1" "line2" ...
+#   Зелёная рамка с успехом.
+success_box() {
+  local title="$1"
+  shift
+  local width=60
+  local inner=$((width - 2))
+  local line
+  line="$(printf '═%.0s' $(seq 1 "$inner"))"
+
+  echo ""
+  printf "${BOLD}${GREEN}╔%s╗${NC}\n" "$line"
+  local title_padded
+  printf -v title_padded "%-${inner}s" "  ✅ ${title}"
+  printf "${BOLD}${GREEN}║%s║${NC}\n" "${title_padded}"
+
+  if [[ $# -gt 0 ]]; then
+    printf "${GREEN}║%$((inner))s║${NC}\n" ""
+    for msg in "$@"; do
+      local msg_padded
+      printf -v msg_padded "%-${inner}s" "    ${msg}"
+      printf "${GREEN}║${NC}%s${GREEN}║${NC}\n" "${msg_padded}"
+    done
+  fi
+
+  printf "${BOLD}${GREEN}╚%s╝${NC}\n" "$line"
+  echo ""
+}
+
 # Signal that lib is loaded (scripts check this)
 COMMON_SH_LOADED=1
 export COMMON_SH_LOADED

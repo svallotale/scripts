@@ -89,6 +89,8 @@ if [[ ! "$PROXY_PORT" =~ ^[0-9]+$ ]] || [[ "$PROXY_PORT" -lt 1 ]] || [[ "$PROXY_
   fail "Порт должен быть 1-65535, получено: $PROXY_PORT"
 fi
 
+banner "Nginx Install" "${DOMAIN} → :${PROXY_PORT}"
+
 require_root "$@"
 detect_os
 
@@ -183,14 +185,11 @@ else
   fi
 fi
 
-# --- Summary ---
-echo ""
-echo "${BOLD}=== Итог ===${NC}"
-print_summary_line "Домен:"      "$DOMAIN"
-print_summary_line "Прокси на:"  "localhost:$PROXY_PORT"
-print_summary_line "SSL:"        "$([[ "$NO_SSL" -eq 1 ]] && echo 'пропущен' || echo 'Let'"'"'s Encrypt')"
-print_summary_line "URL:"        "$([[ "$NO_SSL" -eq 1 ]] && echo "http://$DOMAIN" || echo "https://$DOMAIN")"
-print_summary_line "Config:"     "$NGINX_CONF"
-echo ""
+URL="$([[ "$NO_SSL" -eq 1 ]] && echo "http://$DOMAIN" || echo "https://$DOMAIN")"
+SSL_STATUS="$([[ "$NO_SSL" -eq 1 ]] && echo 'HTTP (без SSL)' || echo "Let's Encrypt")"
 
-ok "Готово."
+success_box "Nginx настроен" \
+  "URL: ${URL}" \
+  "Прокси на: localhost:${PROXY_PORT}" \
+  "SSL: ${SSL_STATUS}" \
+  "Config: ${NGINX_CONF}"

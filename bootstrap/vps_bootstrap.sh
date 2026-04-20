@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# vps_bootstrap.sh — orchestrator
+# vps_bootstrap.sh — interactive orchestrator
 # Runs multiple bootstrap scripts on a fresh VPS with one command.
 #
-# Available modules: docker, zsh, nginx, ssh, firewall (future)
+# Modules: docker, zsh, nginx, ssh
 #
 # Usage:
-#   sudo ./vps_bootstrap.sh --docker --zsh
-#   sudo ./vps_bootstrap.sh --all --domain=api.foo --port=3000 --email=me@foo
-#   sudo ./vps_bootstrap.sh --docker --nginx --domain=api.foo --port=3000 --email=me@foo
+#   sudo ./vps_bootstrap.sh                          # interactive menu
+#   sudo ./vps_bootstrap.sh --docker --zsh           # non-interactive
+#   sudo ./vps_bootstrap.sh --all --domain=... ...   # full setup
 #
 # Via curl:
 #   curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/vps_bootstrap.sh | \
@@ -44,45 +44,38 @@ PROXY_PORT=""
 EMAIL=""
 
 # --- Parse args ---
+INTERACTIVE=1
 for arg in "$@"; do
   case "$arg" in
-    --all)       DO_DOCKER=1; DO_ZSH=1; DO_NGINX=1; DO_SSH=1 ;;
-    --docker)    DO_DOCKER=1 ;;
-    --zsh)       DO_ZSH=1 ;;
-    --nginx)     DO_NGINX=1 ;;
-    --ssh)       DO_SSH=1 ;;
+    --all)       DO_DOCKER=1; DO_ZSH=1; DO_NGINX=1; DO_SSH=1; INTERACTIVE=0 ;;
+    --docker)    DO_DOCKER=1; INTERACTIVE=0 ;;
+    --zsh)       DO_ZSH=1; INTERACTIVE=0 ;;
+    --nginx)     DO_NGINX=1; INTERACTIVE=0 ;;
+    --ssh)       DO_SSH=1; INTERACTIVE=0 ;;
     --domain=*)  DOMAIN="${arg#*=}" ;;
     --port=*)    PROXY_PORT="${arg#*=}" ;;
     --email=*)   EMAIL="${arg#*=}" ;;
     -h|--help)
       cat <<EOF
 Usage: $0 [MODULES] [OPTIONS]
+   or: $0                    (интерактивное меню)
 
-Modules (выбери хотя бы один):
-  --all              Все модули (docker + zsh + nginx + ssh)
+Modules:
+  --all              docker + zsh + nginx + ssh
   --docker           Docker Engine + Compose
   --zsh              Zsh + oh-my-zsh
   --nginx            Nginx reverse proxy + SSL
   --ssh              SSH hardening (interactive TUI)
 
 Опции (для --nginx):
-  --domain=DOMAIN    Домен (например api.example.com)
+  --domain=DOMAIN    Домен (api.example.com)
   --port=PORT        Backend порт
   --email=EMAIL      Email для Let's Encrypt
 
 Примеры:
-  # Просто Docker
-  sudo $0 --docker
-
-  # Docker + zsh (обычный старт dev-сервера)
-  sudo $0 --docker --zsh
-
-  # Полный прод-setup
-  sudo $0 --all --domain=api.mysite.com --port=3000 --email=admin@mysite.com
-
-  # Через curl
-  curl -fsSL https://raw.githubusercontent.com/svallotale/scripts/main/bootstrap/vps_bootstrap.sh | \\
-    sudo bash -s -- --docker --zsh
+  sudo $0                                               # интерактив
+  sudo $0 --docker --zsh                                # dev-сервер
+  sudo $0 --all --domain=api.foo --port=3000 --email=a@b.c  # прод
 EOF
       exit 0
       ;;
@@ -90,9 +83,59 @@ EOF
   esac
 done
 
-# --- Validation ---
+# =============================================================================
+# Welcome banner
+# =============================================================================
+
+clear 2>/dev/null || true
+banner "VPS Bootstrap" "Modular server setup · github.com/svallotale/scripts"
+
+require_root "$@"
+detect_user
+detect_os
+
+info "Пользователь: ${BOLD}${TARGET_USER}${NC}"
+info "OS: ${BOLD}${OS_ID} ${OS_VERSION}${NC} (${OS_CODENAME})"
+info "Хост: ${BOLD}$(hostname)${NC}"
+
+# =============================================================================
+# Interactive mode (no flags → menu)
+# =============================================================================
+
+if [[ "$INTERACTIVE" -eq 1 ]] && [[ -t 0 ]]; then
+  section "Выбор модулей"
+  echo "${DIM}Можно выбрать несколько — будут запущены по очереди.${NC}"
+  echo ""
+
+  if confirm "Установить Docker (Engine + Compose)?" "y"; then
+    DO_DOCKER=1
+  fi
+
+  if confirm "Установить Zsh + oh-my-zsh?" "y"; then
+    DO_ZSH=1
+  fi
+
+  if confirm "Настроить Nginx reverse proxy + SSL?" "n"; then
+    DO_NGINX=1
+    printf "${CYAN}❯ Домен (например api.example.com): ${NC}"
+    read -r DOMAIN
+    printf "${CYAN}❯ Backend порт (например 3000): ${NC}"
+    read -r PROXY_PORT
+    printf "${CYAN}❯ Email для Let's Encrypt: ${NC}"
+    read -r EMAIL
+  fi
+
+  if confirm "Запустить SSH hardening (интерактивный TUI)?" "n"; then
+    DO_SSH=1
+  fi
+fi
+
+# =============================================================================
+# Validation
+# =============================================================================
+
 if [[ "$DO_DOCKER" -eq 0 && "$DO_ZSH" -eq 0 && "$DO_NGINX" -eq 0 && "$DO_SSH" -eq 0 ]]; then
-  fail "Не выбран ни один модуль. Используй --docker, --zsh, --nginx, --ssh или --all. См. $0 --help"
+  fail "Не выбран ни один модуль. См. $0 --help"
 fi
 
 if [[ "$DO_NGINX" -eq 1 ]]; then
@@ -100,37 +143,34 @@ if [[ "$DO_NGINX" -eq 1 ]]; then
     || fail "Для --nginx требуются --domain, --port, --email"
 fi
 
-require_root "$@"
-detect_user
-detect_os
+# =============================================================================
+# Execution plan
+# =============================================================================
 
-# --- Execution plan ---
-echo ""
-echo "${BOLD}=== План выполнения ===${NC}"
-[[ "$DO_DOCKER" -eq 1 ]] && print_summary_line "[ ] Docker:"  "Engine + Compose plugin"
-[[ "$DO_ZSH" -eq 1 ]]    && print_summary_line "[ ] Zsh:"     "zsh + oh-my-zsh + plugins"
-[[ "$DO_NGINX" -eq 1 ]]  && print_summary_line "[ ] Nginx:"   "$DOMAIN → :$PROXY_PORT + SSL"
-[[ "$DO_SSH" -eq 1 ]]    && print_summary_line "[ ] SSH:"     "hardening + port knocking + fail2ban (INTERACTIVE)"
-print_summary_line "Пользователь:" "$TARGET_USER"
-print_summary_line "OS:"           "$OS_ID $OS_VERSION ($OS_CODENAME)"
+section "План выполнения"
+
+MODULE_COUNT=0
+[[ "$DO_DOCKER" -eq 1 ]] && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Docker:"  "Engine + Compose plugin"; }
+[[ "$DO_ZSH" -eq 1 ]]    && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Zsh:"     "zsh + oh-my-zsh + plugins"; }
+[[ "$DO_NGINX" -eq 1 ]]  && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] Nginx:"   "${DOMAIN} → :${PROXY_PORT} + SSL"; }
+[[ "$DO_SSH" -eq 1 ]]    && { MODULE_COUNT=$((MODULE_COUNT+1)); print_summary_line "[${MODULE_COUNT}] SSH:"     "hardening + port knocking (INTERACTIVE)"; }
 echo ""
 
-if [[ -t 0 ]]; then
-  read -rp "Продолжить? [Y/n] " ans
-  [[ "${ans:-y}" =~ ^[nN] ]] && fail "Отменено"
+if ! confirm "Всё верно? Запускаем?" "y"; then
+  fail "Отменено пользователем"
 fi
 
-# --- Helper to run sub-script ---
+# =============================================================================
+# Run modules
+# =============================================================================
+
 run_module() {
   local name="$1"
   shift
   local url="${REPO_RAW}/bootstrap/${name}"
   local local_path="${SCRIPT_DIR}/${name}"
 
-  echo ""
-  echo "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo "${BOLD}${BLUE}  → ${name} $*${NC}"
-  echo "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  section "${name}${*:+ }$*"
 
   if [[ -f "$local_path" ]]; then
     bash "$local_path" "$@" || fail "Модуль $name упал"
@@ -139,36 +179,37 @@ run_module() {
   fi
 }
 
-# --- Execute ---
-[[ "$DO_DOCKER" -eq 1 ]] && run_module "docker_install.sh"
-[[ "$DO_ZSH" -eq 1 ]]    && run_module "zsh_install.sh"
+CURRENT=0
+[[ "$DO_DOCKER" -eq 1 ]] && { CURRENT=$((CURRENT+1)); progress_step "$CURRENT" "$MODULE_COUNT" "Docker install"; run_module "docker_install.sh"; }
+[[ "$DO_ZSH" -eq 1 ]]    && { CURRENT=$((CURRENT+1)); progress_step "$CURRENT" "$MODULE_COUNT" "Zsh install"; run_module "zsh_install.sh"; }
 
 if [[ "$DO_NGINX" -eq 1 ]]; then
+  CURRENT=$((CURRENT+1))
+  progress_step "$CURRENT" "$MODULE_COUNT" "Nginx reverse proxy + SSL"
   run_module "nginx_install.sh" "--domain=$DOMAIN" "--port=$PROXY_PORT" "--email=$EMAIL"
 fi
 
 if [[ "$DO_SSH" -eq 1 ]]; then
-  warn "SSH hardening запускается интерактивно. Открой ВТОРУЮ SSH-сессию для страховки!"
-  if [[ -t 0 ]]; then
-    read -rp "Готов? [Y/n] " ans
-    [[ "${ans:-y}" =~ ^[nN] ]] || run_module "secure_ssh.sh"
+  CURRENT=$((CURRENT+1))
+  progress_step "$CURRENT" "$MODULE_COUNT" "SSH hardening"
+  warn "Интерактивный модуль. Открой ВТОРУЮ SSH-сессию перед запуском!"
+  if confirm "Готов к SSH hardening?" "n"; then
+    run_module "secure_ssh.sh"
   else
-    warn "Non-interactive mode — SSH hardening пропущен"
+    warn "SSH hardening пропущен"
   fi
 fi
 
-# --- Final summary ---
-echo ""
-echo "${BOLD}${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
-echo "${BOLD}${GREEN}║                                                      ║${NC}"
-echo "${BOLD}${GREEN}║          VPS Bootstrap завершён успешно              ║${NC}"
-echo "${BOLD}${GREEN}║                                                      ║${NC}"
-echo "${BOLD}${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
-echo ""
-[[ "$DO_DOCKER" -eq 1 ]] && ok "Docker: $(docker --version 2>/dev/null || echo 'установлен')"
-[[ "$DO_ZSH" -eq 1 ]]    && ok "Zsh: $(zsh --version 2>/dev/null | cut -d, -f1 || echo 'установлен')"
-[[ "$DO_NGINX" -eq 1 ]]  && ok "Nginx: https://$DOMAIN → :$PROXY_PORT"
-[[ "$DO_SSH" -eq 1 ]]    && ok "SSH hardening выполнен (проверь новый порт!)"
-echo ""
-warn "НЕ ЗАБУДЬ: перелогинься для активации docker-группы и zsh shell"
-echo ""
+# =============================================================================
+# Final summary
+# =============================================================================
+
+SUMMARY_LINES=()
+[[ "$DO_DOCKER" -eq 1 ]] && SUMMARY_LINES+=("Docker: $(docker --version 2>/dev/null || echo 'установлен')")
+[[ "$DO_ZSH" -eq 1 ]]    && SUMMARY_LINES+=("Zsh: $(zsh --version 2>/dev/null | cut -d, -f1 || echo 'установлен')")
+[[ "$DO_NGINX" -eq 1 ]]  && SUMMARY_LINES+=("Nginx: https://${DOMAIN}")
+[[ "$DO_SSH" -eq 1 ]]    && SUMMARY_LINES+=("SSH: hardened (проверь новый порт!)")
+SUMMARY_LINES+=("")
+SUMMARY_LINES+=("⚠ Перелогинься для активации docker/zsh")
+
+success_box "VPS Bootstrap завершён" "${SUMMARY_LINES[@]}"

@@ -29,6 +29,8 @@ fi
 
 # =============================================================================
 
+banner "Zsh Install" "zsh + oh-my-zsh + плагины"
+
 require_root "$@"
 detect_user
 detect_os
@@ -93,12 +95,8 @@ fi
 
 chown -R "${TARGET_USER}:${TARGET_USER}" "${OHMYZSH_DIR}" "${ZSHRC}" 2>/dev/null || true
 
-# --- Summary ---
-echo ""
-echo "${BOLD}=== Итог ===${NC}"
-print_summary_line "Zsh:"         "$(zsh --version 2>/dev/null | cut -d, -f1 || echo 'не найден')"
-print_summary_line "oh-my-zsh:"   "$([[ -d "${OHMYZSH_DIR}" ]] && echo "✓ ${OHMYZSH_DIR}" || echo 'не установлен')"
-print_summary_line "Shell:"       "$(getent passwd "${TARGET_USER}" | cut -d: -f7) (активируется после relogin)"
-echo ""
-
-ok "Готово."
+success_box "Zsh установлен" \
+  "$(zsh --version 2>/dev/null | cut -d, -f1 || echo 'zsh не найден')" \
+  "oh-my-zsh: $([[ -d "${OHMYZSH_DIR}" ]] && echo "✓ готов" || echo 'не установлен')" \
+  "" \
+  "⚠ Перелогинься для активации zsh shell"
