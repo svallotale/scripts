@@ -121,12 +121,28 @@ run_silent() {
     fi
 }
 
+# Read a line of user input, working both for `bash script.sh` (stdin = tty)
+# and for `curl ... | bash` (stdin = pipe).  In the latter case we read from
+# /dev/tty directly so the user can still answer prompts.
+_read_input() {
+    local __varname="$1"
+    if [[ -t 0 ]]; then
+        read -r "${__varname?}"
+    elif [[ -r /dev/tty ]]; then
+        read -r "${__varname?}" < /dev/tty
+    else
+        # No TTY available at all (CI / headless) — empty answer = default
+        printf -v "$__varname" '%s' ''
+        return 1
+    fi
+}
+
 confirm() {
     local msg="$1"
     echo ""
     echo -ne "  ${YELLOW}?${NC} ${msg} ${DIM}[y/N]${NC}: "
-    local answer
-    read -r answer
+    local answer=""
+    _read_input answer || true
     [[ "$answer" =~ ^[Yy]$ ]]
 }
 
@@ -134,8 +150,8 @@ confirm_or_regenerate() {
     local msg="$1"
     echo ""
     echo -ne "  ${YELLOW}?${NC} ${msg} ${DIM}[y/N/r — перегенерировать]${NC}: "
-    local answer
-    read -r answer
+    local answer=""
+    _read_input answer || true
     case "$answer" in
         [Yy]) return 0 ;;
         [Rr]) return 2 ;;
